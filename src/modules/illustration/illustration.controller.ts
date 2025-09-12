@@ -39,7 +39,7 @@ export class IllustrationController {
 		@Query('pageSize') pageSize: number = 1,
 		@Query('current') current: number = 30,
 	) {
-		const works = await this.illustrationService.getItemsInPages(
+		const works = await this.illustrationService.getRecommendedIllustrations(
 			pageSize,
 			current,
 			userInfo ? userInfo.id : tempId,

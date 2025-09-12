@@ -18,6 +18,7 @@ import * as sharp from 'sharp';
 import axios from 'axios';
 import { Image } from './entities/image.entity';
 import type { DEVICES_TYPE } from '@/types';
+import { shuffleArray } from '@/utils/shuffleArray';
 
 @Injectable()
 export class IllustrationService {
@@ -55,51 +56,47 @@ export class IllustrationService {
 	private readonly imageRepository: Repository<Image>;
 
 	// 分页随机获取推荐作品列表
-	async getItemsInPages(pageSize: number, current: number, userId: string) {
-		const userCacheKey = `user:${userId}:recommended-illustrations-indexes`;
+	async getRecommendedIllustrations(pageSize: number, current: number, userId: string) {
+		const userCacheKey = `user:${userId}:recommended-illustration-ids`;
+		const cacheTTL = 60 * 30;
 
-		if (Number(current) === 1) {
-			await this.cacheManager.del(userCacheKey);
-		}
+		// 1. 尝试从缓存获取完整的、已洗牌的 ID 列表
+		let shuffledIds: string[] = await this.cacheManager.get(userCacheKey);
 
-		let recommendedIndexes: number[] = await this.cacheManager.get(userCacheKey);
-		if (!recommendedIndexes) {
-			recommendedIndexes = [];
-		}
-
-		const results = [];
-		const totalCount = await this.getWorkCount();
-		const totalCountList = Array.from({ length: totalCount })
-			.fill(0)
-			.map((_, index) => index);
-
-		while (results.length < pageSize) {
-			if (recommendedIndexes.length === totalCount) {
-				return results;
-			}
-
-			const diff = totalCountList.filter((index) => !recommendedIndexes.includes(index));
-
-			const randomOffset = diff[Math.floor(Math.random() * diff.length)];
-
-			const randomItem = await this.illustrationRepository
+		// 2. 如果缓存未命中，则生成、洗牌并缓存
+		if (!shuffledIds) {
+			// a. 一次性获取所有 ID (非常快)
+			const allIdsResult = await this.illustrationRepository
 				.createQueryBuilder('illustration')
-				.leftJoinAndSelect('illustration.user', 'user')
-				.skip(randomOffset)
-				.take(1)
-				.getOne();
+				.select('illustration.id', 'id')
+				.getRawMany<{ id: string }>();
 
-			if (!randomItem || recommendedIndexes.includes(randomOffset)) {
-				continue;
-			}
+			const allIds = allIdsResult.map((item) => item.id);
 
-			results.push(randomItem);
-			recommendedIndexes.push(randomOffset);
+			// b. 高效洗牌
+			shuffledIds = shuffleArray(allIds);
 
-			await this.cacheManager.set(userCacheKey, recommendedIndexes, 1000 * 60 * 30);
+			// c. 存入缓存
+			await this.cacheManager.set(userCacheKey, shuffledIds, cacheTTL);
 		}
 
-		return results;
+		// 3. 根据分页参数，从已排序的 ID 列表中切片
+		const startIndex = (current - 1) * pageSize;
+		const idsForPage = shuffledIds.slice(startIndex, startIndex + pageSize);
+
+		// 如果当前页没有 ID 了 (已经翻到最后一页之后)
+		if (idsForPage.length === 0) {
+			return [];
+		}
+
+		// 4. 执行唯一一次数据库查询，获取作品详情
+		const illustrations = await this.illustrationRepository.findByIds(idsForPage);
+
+		// 5. findByIds 不保证顺序，我们需要根据 idsForPage 的顺序重新排序
+		const illustrationsMap = new Map(illustrations.map((ill) => [ill.id, ill]));
+		const sortedIllustrations = idsForPage.map((id) => illustrationsMap.get(id));
+
+		return sortedIllustrations;
 	}
 
 	// 分页获取最新作品列表
