@@ -11,16 +11,17 @@ import type { Label } from '../label/entities/label.entity';
 import { FavoriteService } from '../favorite/favorite.service';
 import { Favorite } from '../favorite/entities/favorite.entity';
 import { WorkPushTemp } from '../illustration/entities/work-push-temp.entity';
-import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 import { LikeWorks } from './entities/like-works.entity';
 import { Follow } from './entities/follow.entity';
 import { ImgHandlerService } from '@/services/img-handler/img-handler.service';
 import { shuffleArray } from '@/utils/shuffleArray';
+import { REDIS_CLIENT } from '@/infra/redis/redis.module';
+import { Redis } from 'ioredis';
 
 @Injectable()
 export class UserService {
-	@Inject(CACHE_MANAGER)
-	private readonly cacheManager: Cache;
+	@Inject(REDIS_CLIENT)
+	private readonly redisClient: Redis;
 
 	@Inject(LabelService)
 	private readonly labelService: LabelService;
@@ -536,7 +537,7 @@ export class UserService {
 		const userCacheKey = `user:${userId}:recommended-user-ids`;
 		const cacheTTL = 60 * 30;
 
-		let shuffledIds: string[] = await this.cacheManager.get(userCacheKey);
+		let shuffledIds: string[] = JSON.parse(await this.redisClient.get(userCacheKey)) || null;
 		if (!shuffledIds) {
 			const allUsersResult = await this.userRepository
 				.createQueryBuilder('user')
@@ -544,11 +545,11 @@ export class UserService {
 				.getRawMany<{ id: string }>();
 			const allOtherUserIds = allUsersResult.map((item) => item.id).filter((id) => id !== userId);
 			shuffledIds = shuffleArray(allOtherUserIds);
-			await this.cacheManager.set(userCacheKey, shuffledIds, cacheTTL);
+			await this.redisClient.set(userCacheKey, JSON.stringify(shuffledIds), 'EX', cacheTTL);
 		}
 
 		const startIndex = (current - 1) * pageSize;
-		const idsForPage = shuffledIds.slice(startIndex, startIndex + pageSize);
+		const idsForPage = shuffledIds.splice(startIndex, pageSize);
 		if (idsForPage.length === 0) return [];
 
 		const inPlaceholders = idsForPage.map(() => '?').join(',');

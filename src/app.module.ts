@@ -10,12 +10,12 @@ import { CommentModule } from './modules/comment/comment.module';
 import { HistoryModule } from './modules/history/history.module';
 import { FavoriteModule } from './modules/favorite/favorite.module';
 import { AuthGuard } from './common/guards/auth.guard';
-import { InvokeRecordInterceptor } from './common/interceptors/invoke-record.interceptor';
+// import { InvokeRecordInterceptor } from './common/interceptors/invoke-record.interceptor';
 import { R2Module } from './infra/r2/r2.module';
 import { ImgHandlerModule } from './services/img-handler/img-handler.module';
 import { DatabaseModule } from './infra/database/database.module';
 import { JwtModule } from './infra/jwt/jwt.module';
-import { CacheModule } from './infra/cache/cache.module';
+import { RedisModule } from './infra/redis/redis.module';
 import { ConfigModule } from './infra/config/config.module';
 import { EmailModule } from './infra/email/email.module';
 
@@ -25,7 +25,7 @@ import { EmailModule } from './infra/email/email.module';
 		ConfigModule,
 		DatabaseModule,
 		JwtModule,
-		CacheModule,
+		RedisModule,
 		R2Module,
 		EmailModule,
 
@@ -53,10 +53,10 @@ import { EmailModule } from './infra/email/email.module';
 			useClass: ResponseInterceptor,
 		},
 		// 全局拦截器，用于记录日志
-		{
-			provide: APP_INTERCEPTOR,
-			useClass: InvokeRecordInterceptor,
-		},
+		// {
+		// 	provide: APP_INTERCEPTOR,
+		// 	useClass: InvokeRecordInterceptor,
+		// },
 		// 全局管道，验证数据
 		{
 			provide: APP_PIPE,

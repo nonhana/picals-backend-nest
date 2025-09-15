@@ -12,14 +12,14 @@ import { IllustrationModule } from '@/modules/illustration/illustration.module';
 import { R2Module } from '@/infra/r2/r2.module';
 import { ConfigModule } from '@/infra/config/config.module';
 import { DatabaseModule } from '@/infra/database/database.module';
-import { CacheModule } from '@/infra/cache/cache.module';
+import { RedisModule } from '@/infra/redis/redis.module';
 import { JwtModule } from '@/infra/jwt/jwt.module';
 
 @Module({
 	imports: [
 		ConfigModule,
 		DatabaseModule,
-		CacheModule,
+		RedisModule,
 		JwtModule,
 		R2Module,
 		UserModule,

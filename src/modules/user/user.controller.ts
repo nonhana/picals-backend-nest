@@ -7,13 +7,14 @@ import { ConfigService } from '@nestjs/config';
 import { EmailService } from '@/infra/email/email.service';
 import { DetailUserVo } from './vo/detail.vo';
 import { LoginUserVo, userLoginInfoVo } from './vo/login.vo';
-import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
+import { REDIS_CLIENT } from '@/infra/redis/redis.module';
 import { JwtUserData } from '@/common/guards/auth.guard';
 import { RequireLogin, UserInfo, AllowVisitor } from '@/common/decorators/login.decorator';
 import { UserItemVo } from './vo/user-item.vo';
 import { LabelItemVO } from '../label/vo/label-item.vo';
 import { IllustrationItemVO } from '../illustration/vo/illustration-item.vo';
 import { FavoriteItemVo } from '../favorite/vo/favorite-item.vo';
+import { Redis } from 'ioredis';
 
 @Controller('user')
 export class UserController {
@@ -23,8 +24,8 @@ export class UserController {
 	@Inject(JwtService)
 	private readonly jwtService: JwtService;
 
-	@Inject(CACHE_MANAGER)
-	private readonly cacheManager: Cache;
+	@Inject(REDIS_CLIENT)
+	private readonly redisClient: Redis;
 
 	@Inject(ConfigService)
 	private readonly configService: ConfigService;
@@ -36,12 +37,12 @@ export class UserController {
 	async verification(@Query('email') email: string) {
 		const code = Math.random().toString().slice(-6);
 
-		if (await this.cacheManager.get(`sent_captcha_${email}`)) {
+		if (await this.redisClient.get(`sent_captcha_${email}`)) {
 			throw new hanaError(10108);
 		}
 
-		await this.cacheManager.set(`sent_captcha_${email}`, email, 1000 * 60);
-		await this.cacheManager.set(`captcha_${email}`, code, 1000 * 60 * 5);
+		await this.redisClient.set(`sent_captcha_${email}`, email, 'EX', 1000 * 60);
+		await this.redisClient.set(`captcha_${email}`, code, 'EX', 1000 * 60 * 5);
 
 		await this.emailService.sendEmail({
 			to: email,
@@ -125,13 +126,13 @@ export class UserController {
 			return '注册成功！';
 		}
 
-		const cacheCode = await this.cacheManager.get(`captcha_${email}`);
+		const cacheCode = await this.redisClient.get(`captcha_${email}`);
 		if (!cacheCode || cacheCode !== verification_code) {
 			throw new hanaError(10103);
 		}
 		await this.userService.register(email, password);
-		await this.cacheManager.del(`captcha_${email}`);
-		await this.cacheManager.del(`sent_captcha_${email}`);
+		await this.redisClient.del(`captcha_${email}`);
+		await this.redisClient.del(`sent_captcha_${email}`);
 		return '注册成功！';
 	}
 
@@ -190,13 +191,13 @@ export class UserController {
 			return '更新成功！';
 		}
 
-		const cacheCode = await this.cacheManager.get(`captcha_${email}`);
+		const cacheCode = await this.redisClient.get(`captcha_${email}`);
 		if (!cacheCode || cacheCode !== verification_code) {
 			throw new hanaError(10103);
 		}
 		await this.userService.updatePassword(id, password);
-		await this.cacheManager.del(`captcha_${email}`);
-		await this.cacheManager.del(`sent_captcha_${email}`);
+		await this.redisClient.del(`captcha_${email}`);
+		await this.redisClient.del(`sent_captcha_${email}`);
 		return '更新成功！';
 	}
 
@@ -216,13 +217,13 @@ export class UserController {
 			return '更新成功！';
 		}
 
-		const cacheCode = await this.cacheManager.get(`captcha_${email}`);
+		const cacheCode = await this.redisClient.get(`captcha_${email}`);
 		if (!cacheCode || cacheCode !== verification_code) {
 			throw new hanaError(10103);
 		}
 		await this.userService.updateInfo(id, { email });
-		await this.cacheManager.del(`captcha_${email}`);
-		await this.cacheManager.del(`sent_captcha_${email}`);
+		await this.redisClient.del(`captcha_${email}`);
+		await this.redisClient.del(`sent_captcha_${email}`);
 		return '更新成功！';
 	}
 

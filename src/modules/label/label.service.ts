@@ -3,9 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Label } from './entities/label.entity';
 import { In, Repository } from 'typeorm';
 import { Illustration } from '../illustration/entities/illustration.entity';
-import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
+import { REDIS_CLIENT } from '@/infra/redis/redis.module';
 import { Like } from 'typeorm';
 import { shuffleArray } from '@/utils/shuffleArray';
+import { Redis } from 'ioredis';
 
 // 生成随机的hex颜色
 const randomColor = () => {
@@ -16,8 +17,8 @@ const randomColor = () => {
 
 @Injectable()
 export class LabelService {
-	@Inject(CACHE_MANAGER)
-	private readonly cacheManager: Cache;
+	@Inject(REDIS_CLIENT)
+	private readonly redisClient: Redis;
 
 	@InjectRepository(Label)
 	private readonly labelRepository: Repository<Label>;
@@ -71,7 +72,7 @@ export class LabelService {
 		const allIdsCacheKey = 'labels:all-ids';
 		const cacheTTL = 60 * 10;
 
-		let allLabelIds: string[] = await this.cacheManager.get(allIdsCacheKey);
+		let allLabelIds: string[] = JSON.parse(await this.redisClient.get(allIdsCacheKey)) || null;
 
 		if (!allLabelIds) {
 			const labelsResult = await this.labelRepository
@@ -81,12 +82,12 @@ export class LabelService {
 
 			allLabelIds = labelsResult.map((item) => item.id);
 
-			await this.cacheManager.set(allIdsCacheKey, allLabelIds, cacheTTL);
+			await this.redisClient.set(allIdsCacheKey, JSON.stringify(allLabelIds), 'EX', cacheTTL);
 		}
 
 		const shuffledIds = shuffleArray(allLabelIds);
 		const targetLength = 30;
-		const randomIds = shuffledIds.slice(0, targetLength);
+		const randomIds = shuffledIds.splice(0, targetLength);
 
 		if (randomIds.length === 0) {
 			return [];

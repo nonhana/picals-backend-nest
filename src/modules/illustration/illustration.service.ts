@@ -13,7 +13,8 @@ import { Illustrator } from '../illustrator/entities/illustrator.entity';
 import { Favorite } from '../favorite/entities/favorite.entity';
 import { downloadFile } from 'src/utils';
 import { ImgHandlerService } from '@/services/img-handler/img-handler.service';
-import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
+import { REDIS_CLIENT } from '@/infra/redis/redis.module';
+import { Redis } from 'ioredis';
 import * as sharp from 'sharp';
 import axios from 'axios';
 import { Image } from './entities/image.entity';
@@ -22,8 +23,8 @@ import { shuffleArray } from '@/utils/shuffleArray';
 
 @Injectable()
 export class IllustrationService {
-	@Inject(CACHE_MANAGER)
-	private readonly cacheManager: Cache;
+	@Inject(REDIS_CLIENT)
+	private readonly redisClient: Redis;
 
 	@Inject(IllustratorService)
 	private readonly illustratorService: IllustratorService;
@@ -61,7 +62,7 @@ export class IllustrationService {
 		const cacheTTL = 60 * 30; // 缓存 30 分钟
 
 		// 1. 尝试从缓存获取完整的、已洗牌的 ID 列表
-		let shuffledIds: string[] = await this.cacheManager.get(userCacheKey);
+		let shuffledIds: string[] = JSON.parse(await this.redisClient.get(userCacheKey)) || null;
 
 		// 2. 如果缓存未命中，则生成、洗牌并缓存
 		if (!shuffledIds) {
@@ -72,12 +73,12 @@ export class IllustrationService {
 
 			const allIds = allIdsResult.map((item) => item.id);
 			shuffledIds = shuffleArray(allIds);
-			await this.cacheManager.set(userCacheKey, shuffledIds, cacheTTL);
+			await this.redisClient.set(userCacheKey, JSON.stringify(shuffledIds), 'EX', cacheTTL);
 		}
 
 		// 3. 根据分页参数，从已排序的 ID 列表中切片
 		const startIndex = (current - 1) * pageSize;
-		const idsForPage = shuffledIds.slice(startIndex, startIndex + pageSize);
+		const idsForPage = shuffledIds.splice(startIndex, pageSize);
 
 		if (idsForPage.length === 0) {
 			return [];
@@ -438,10 +439,10 @@ export class IllustrationService {
 		const result: string[] = [];
 
 		// 从全部的图片列表中随机选取一张
-		let totalCount: number = await this.cacheManager.get(countCacheKey);
+		let totalCount: number = parseInt(await this.redisClient.get(countCacheKey)) || 0;
 		if (!totalCount) {
 			totalCount = await this.imageRepository.count();
-			await this.cacheManager.set(countCacheKey, totalCount, 1000 * 60 * 10);
+			await this.redisClient.set(countCacheKey, totalCount.toString(), 'EX', 1000 * 60 * 10);
 		}
 
 		while (result.length === 0) {
@@ -562,10 +563,10 @@ export class IllustrationService {
 	// 获取数据库内部的作品总数
 	async getWorkCount() {
 		const countCacheKey = 'illustrations:count';
-		let totalCount: number = await this.cacheManager.get(countCacheKey);
+		let totalCount: number = parseInt(await this.redisClient.get(countCacheKey)) || 0;
 		if (!totalCount) {
 			totalCount = await this.illustrationRepository.count();
-			await this.cacheManager.set(countCacheKey, totalCount, 1000 * 60 * 10);
+			await this.redisClient.set(countCacheKey, totalCount.toString(), 'EX', 1000 * 60 * 10);
 		}
 		return totalCount;
 	}
