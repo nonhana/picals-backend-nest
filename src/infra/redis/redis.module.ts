@@ -11,6 +11,7 @@ const redisProvider: Provider<RedisClient> = {
 			host: configService.get<string>('REDIS_HOST'),
 			port: configService.get<number>('REDIS_PORT'),
 			db: configService.get<number>('REDIS_DB'),
+			password: configService.get<string>('REDIS_PASS'),
 		});
 
 		client.on('error', (err) => {
