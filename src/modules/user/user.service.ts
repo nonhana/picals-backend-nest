@@ -15,6 +15,7 @@ import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 import { LikeWorks } from './entities/like-works.entity';
 import { Follow } from './entities/follow.entity';
 import { ImgHandlerService } from '@/services/img-handler/img-handler.service';
+import { shuffleArray } from '@/utils/shuffleArray';
 
 @Injectable()
 export class UserService {
@@ -532,66 +533,105 @@ export class UserService {
 
 	// 分页获取推荐用户列表
 	async getRecommendUserInPages(current: number, pageSize: number, userId: string) {
-		const countCacheKey = 'users:count';
-		const userCacheKey = `user:${userId}:recommended-users-indexes`;
+		const userCacheKey = `user:${userId}:recommended-user-ids`;
+		const cacheTTL = 60 * 30;
 
-		if (Number(current) === 1) {
-			await this.cacheManager.del(userCacheKey);
-		}
-
-		let recommendedIndexes: number[] = await this.cacheManager.get(userCacheKey);
-		if (!recommendedIndexes) {
-			recommendedIndexes = [];
-		}
-
-		const results = [];
-
-		let totalCount: number = await this.cacheManager.get(countCacheKey);
-		if (!totalCount) {
-			totalCount = await this.userRepository.createQueryBuilder('user').getCount();
-			await this.cacheManager.set(countCacheKey, totalCount, 1000 * 60 * 10);
-		}
-
-		const totalCountList = Array.from({ length: totalCount }, (_, index) => index);
-
-		while (results.length < pageSize) {
-			if (recommendedIndexes.length === totalCount - 1) {
-				return results;
-			}
-
-			const diff = totalCountList.filter((index) => !recommendedIndexes.includes(index));
-
-			const randomOffset = diff[Math.floor(Math.random() * diff.length)];
-
-			const randomItem = await this.userRepository
+		let shuffledIds: string[] = await this.cacheManager.get(userCacheKey);
+		if (!shuffledIds) {
+			const allUsersResult = await this.userRepository
 				.createQueryBuilder('user')
-				.skip(randomOffset)
-				.take(1)
-				.getOne();
-
-			const latestIllustrations = await this.illustrationRepository.find({
-				where: { user: { id: randomItem.id } },
-				relations: ['user'],
-				order: { createdTime: 'DESC' },
-				take: 4,
-			});
-
-			randomItem.illustrations = latestIllustrations;
-
-			if (randomItem.id === userId) {
-				continue;
-			}
-
-			if (!randomItem || recommendedIndexes.includes(randomOffset)) {
-				continue;
-			}
-
-			results.push(randomItem);
-			recommendedIndexes.push(randomOffset);
-
-			await this.cacheManager.set(userCacheKey, recommendedIndexes, 1000 * 60 * 30);
+				.select('user.id', 'id')
+				.getRawMany<{ id: string }>();
+			const allOtherUserIds = allUsersResult.map((item) => item.id).filter((id) => id !== userId);
+			shuffledIds = shuffleArray(allOtherUserIds);
+			await this.cacheManager.set(userCacheKey, shuffledIds, cacheTTL);
 		}
 
-		return results;
+		const startIndex = (current - 1) * pageSize;
+		const idsForPage = shuffledIds.slice(startIndex, startIndex + pageSize);
+		if (idsForPage.length === 0) return [];
+
+		const inPlaceholders = idsForPage.map(() => '?').join(',');
+		const sql = `
+			SELECT
+					ranked_illustrations.*, 
+					u.id AS userId, u.username AS userUsername, u.email AS userEmail, u.avatar AS userAvatar, u.little_avatar AS userLittleAvatar, u.signature AS userSignature
+			FROM (
+					SELECT
+							ill.*, 
+							ROW_NUMBER() OVER(PARTITION BY ill.user_id ORDER BY ill.created_time DESC) AS rn
+					FROM
+							illustrations ill
+					WHERE
+							ill.user_id IN (${inPlaceholders})
+			) AS ranked_illustrations
+			LEFT JOIN users u ON u.id = ranked_illustrations.user_id
+			WHERE ranked_illustrations.rn <= 4
+		`;
+
+		const queryResult = await this.illustrationRepository.manager.query(sql, idsForPage);
+
+		// 创建一个用户 Map，但这次值是完整的用户对象
+		const userMap = new Map<string, User & { illustrations: Illustration[] }>();
+
+		// 遍历查询结果，构建用户和作品的完整结构
+		for (const row of queryResult) {
+			// {
+			// 	id: 'e68390c3-044a-4b91-9be9-37d9b052f789',
+			// 	name: '',
+			// 	intro: '',
+			// 	reprintType: 1,
+			// 	openComment: 1,
+			// 	isAIGenerated: 0,
+			// 	imgList: 'https://picals-r2.caelum.moe/images-1720940326940-622831220-117580037_p0.jpg',
+			// 	cover: 'https://picals-r2.caelum.moe/images/images-1720940326940-622831220-117580037_p0-cover-thumbnail.jpg',
+			// 	original_url: 'https://www.pixiv.net/artworks/117580037',
+			// 	like_count: 1,
+			// 	view_count: 6,
+			// 	collect_count: 0,
+			// 	comment_count: 0,
+			// 	created_time: 2024-07-14T04:58:48.594Z,
+			// 	updated_time: 2025-07-05T15:06:34.082Z,
+			// 	user_id: 'eeaff765-30ce-4af5-8db7-24020a5f4e34',
+			// 	illustrator_id: 'ae4d3b89-303a-4058-b8a2-ee042d35fff4',
+			// 	status: 0,
+			// 	rn: '4',
+			// 	userId: 'eeaff765-30ce-4af5-8db7-24020a5f4e34',
+			// 	userUsername: '一只萌大新',
+			// 	userAvatar: 'https://picals-r2.caelum.moe/images/image-1718290795662-173119738-default-avatar.jpg'
+			// }
+
+			const uid = row.userId as string;
+
+			if (!userMap.has(uid)) {
+				const user = this.userRepository.create({
+					id: uid,
+					username: row.userUsername,
+					email: row.userEmail,
+					signature: row.userSignature,
+					avatar: row.userAvatar,
+					illustrations: [],
+				});
+				userMap.set(uid, user);
+			}
+
+			const illustration = this.illustrationRepository.create({
+				id: row.id,
+				imgList: row.imgList,
+				cover: row.cover,
+				name: row.name,
+				createdTime: row.created_time,
+				user: {
+					id: uid,
+					username: row.userUsername,
+					littleAvatar: row.userLittleAvatar,
+				},
+			});
+			userMap.get(uid).illustrations.push(illustration);
+		}
+
+		const sortedUsers = idsForPage.map((id) => userMap.get(id)).filter(Boolean);
+
+		return sortedUsers;
 	}
 }

@@ -466,10 +466,14 @@ export class UserController {
 		return await Promise.all(
 			userList.map(async (user) => {
 				const workLikeList: boolean[] = [];
-				if (userInfo && user.illustrations) {
-					for (const work of user.illustrations) {
-						const status = await this.userService.isLiked(userInfo.id, work.id);
-						workLikeList.push(status);
+				if (user.illustrations) {
+					if (userInfo) {
+						for (const work of user.illustrations) {
+							const status = await this.userService.isLiked(userInfo.id, work.id);
+							workLikeList.push(status);
+						}
+					} else {
+						user.illustrations.forEach(() => workLikeList.push(false));
 					}
 				}
 				return new UserItemVo(

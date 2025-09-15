@@ -1,10 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Label } from './entities/label.entity';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Illustration } from '../illustration/entities/illustration.entity';
 import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 import { Like } from 'typeorm';
+import { shuffleArray } from '@/utils/shuffleArray';
 
 // 生成随机的hex颜色
 const randomColor = () => {
@@ -67,37 +68,36 @@ export class LabelService {
 
 	// 获取推荐标签列表
 	async getRecommendLabels() {
-		const countCacheKey = 'labels:count';
+		const allIdsCacheKey = 'labels:all-ids';
+		const cacheTTL = 60 * 10;
 
-		let count = await this.cacheManager.get<number>(countCacheKey);
-		if (!count) {
-			count = await this.labelRepository.count();
-			await this.cacheManager.set(countCacheKey, count, 1000 * 60 * 10);
+		let allLabelIds: string[] = await this.cacheManager.get(allIdsCacheKey);
+
+		if (!allLabelIds) {
+			const labelsResult = await this.labelRepository
+				.createQueryBuilder('label')
+				.select('label.id', 'id')
+				.getRawMany<{ id: string }>();
+
+			allLabelIds = labelsResult.map((item) => item.id);
+
+			await this.cacheManager.set(allIdsCacheKey, allLabelIds, cacheTTL);
 		}
 
+		const shuffledIds = shuffleArray(allLabelIds);
 		const targetLength = 30;
+		const randomIds = shuffledIds.slice(0, targetLength);
 
-		const selectedLabels = [];
-		const result = [];
-
-		for (let i = 0; i < targetLength; i++) {
-			if (selectedLabels.length === count) break;
-
-			const randomIndex = Math.floor(Math.random() * count);
-			if (selectedLabels.includes(randomIndex)) {
-				i--;
-				continue;
-			}
-			selectedLabels.push(randomIndex);
-			const label = await this.labelRepository
-				.createQueryBuilder()
-				.skip(randomIndex)
-				.take(1)
-				.getOne();
-			result.push(label);
+		if (randomIds.length === 0) {
+			return [];
 		}
 
-		return result;
+		const labels = await this.labelRepository.findBy({ id: In(randomIds) });
+
+		const labelsMap = new Map(labels.map((label) => [label.id, label] as [string, Label]));
+		const sortedLabels = randomIds.map((id) => labelsMap.get(id));
+
+		return sortedLabels;
 	}
 
 	// 分页获取带有该标签的作品列表
