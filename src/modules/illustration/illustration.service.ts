@@ -58,25 +58,20 @@ export class IllustrationService {
 	// 分页随机获取推荐作品列表
 	async getRecommendedIllustrations(pageSize: number, current: number, userId: string) {
 		const userCacheKey = `user:${userId}:recommended-illustration-ids`;
-		const cacheTTL = 60 * 30;
+		const cacheTTL = 60 * 30; // 缓存 30 分钟
 
 		// 1. 尝试从缓存获取完整的、已洗牌的 ID 列表
 		let shuffledIds: string[] = await this.cacheManager.get(userCacheKey);
 
 		// 2. 如果缓存未命中，则生成、洗牌并缓存
 		if (!shuffledIds) {
-			// a. 一次性获取所有 ID (非常快)
 			const allIdsResult = await this.illustrationRepository
 				.createQueryBuilder('illustration')
 				.select('illustration.id', 'id')
 				.getRawMany<{ id: string }>();
 
 			const allIds = allIdsResult.map((item) => item.id);
-
-			// b. 高效洗牌
 			shuffledIds = shuffleArray(allIds);
-
-			// c. 存入缓存
 			await this.cacheManager.set(userCacheKey, shuffledIds, cacheTTL);
 		}
 
@@ -84,17 +79,24 @@ export class IllustrationService {
 		const startIndex = (current - 1) * pageSize;
 		const idsForPage = shuffledIds.slice(startIndex, startIndex + pageSize);
 
-		// 如果当前页没有 ID 了 (已经翻到最后一页之后)
 		if (idsForPage.length === 0) {
 			return [];
 		}
 
-		// 4. 执行唯一一次数据库查询，获取作品详情
-		const illustrations = await this.illustrationRepository.findByIds(idsForPage);
+		// 4. 使用 createQueryBuilder 和 WHERE IN 来获取详情和关联数据
+		const illustrations = await this.illustrationRepository
+			.createQueryBuilder('illustration')
+			.leftJoinAndSelect('illustration.user', 'user')
+			.where('illustration.id IN (:...ids)', { ids: idsForPage })
+			.getMany();
 
-		// 5. findByIds 不保证顺序，我们需要根据 idsForPage 的顺序重新排序
-		const illustrationsMap = new Map(illustrations.map((ill) => [ill.id, ill]));
-		const sortedIllustrations = idsForPage.map((id) => illustrationsMap.get(id));
+		// 5. 保持随机顺序：将查询结果重新排序
+		// 创建一个 Map 以便快速查找，键是 illustration 的 id
+		const illustrationsMap = new Map(
+			illustrations.map((ill) => [ill.id, ill] as [string, Illustration]),
+		);
+
+		const sortedIllustrations = idsForPage.map((id) => illustrationsMap.get(id)).filter(Boolean);
 
 		return sortedIllustrations;
 	}

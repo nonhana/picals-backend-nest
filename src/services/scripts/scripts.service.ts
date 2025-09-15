@@ -60,7 +60,7 @@ export class ScriptsService {
 			reprintType: 1,
 			openComment: true,
 			isAIGenerated: false,
-			imgList: ['https://moe.nonhana.pics/121681460_0.jpg'],
+			imgList: ['https://static-r2.caelum.moe/avatar.webp'],
 			workUrl: 'https://www.pixiv.net/artworks/121681460',
 			illustratorInfo: {
 				name: 'ZUU',
