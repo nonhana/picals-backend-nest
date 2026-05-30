@@ -4,7 +4,6 @@ module.exports = {
 	apps: [
 		{
 			name: 'picals-backend',
-			port: 6379,
 			cwd: path.join(__dirname),
 			instances: 1,
 			autorestart: true,
